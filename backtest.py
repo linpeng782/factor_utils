@@ -1,9 +1,12 @@
 import numpy as np
 import pandas as pd
+from scipy import stats
+import statsmodels.api as sm
 from rqdatac import *
 from rqfactor import *
 from rqfactor import Factor
 from rqfactor.extension import *
+from datetime import datetime
 
 init("13522652015", "123456")
 import rqdatac
@@ -21,11 +24,17 @@ plt.rcParams["font.sans-serif"] = [
 ]
 plt.rcParams["axes.unicode_minus"] = False
 
+
+# 创建分离式策略报告：收益曲线图 + 绩效指标表
+from matplotlib import rcParams
+import os
+
+# 设置中文字体
+rcParams["font.sans-serif"] = ["SimHei", "Arial Unicode MS", "DejaVu Sans"]
+rcParams["axes.unicode_minus"] = False
 import warnings
 
 warnings.filterwarnings("ignore")
-
-from datetime import datetime
 
 
 def get_buy_list(df, top_type="rank", rank_n=100, quantile_q=0.8):
@@ -133,6 +142,7 @@ def backtest(
     commission_rate=0.0002,
     min_transaction_fee=5,
     cash_annual_yield=0.02,
+    backtest_start_date=None,
 ):
     """
     量化策略回测框架
@@ -145,6 +155,7 @@ def backtest(
     :param commission_rate: 佣金率 -> float
     :param min_transaction_fee: 最低交易手续费 -> float
     :param cash_annual_yield: 现金年化收益率 -> float
+    :param start_date: 回测起始日期，格式为'YYYY-MM-DD'或None（从数据开始日期开始） -> str or None
     :return: 账户历史记录 -> DataFrame
     """
 
@@ -159,14 +170,26 @@ def backtest(
     sell_cost_rate = stamp_tax_rate + transfer_fee_rate + commission_rate
     # 现金账户日利率（年化收益率转换为日收益率）
     daily_cash_yield = (1 + cash_annual_yield) ** (1 / 252) - 1
-
+    # 筛选出回测期间的交易日
+    all_signal_dates = portfolio_weights.index.tolist()
+    # 处理起始日期参数
+    if backtest_start_date is not None:
+        # 将字符串日期转换为pandas Timestamp
+        start_timestamp = pd.to_datetime(backtest_start_date)
+        # 筛选出大于等于起始日期的信号日期
+        filtered_signal_dates = [
+            date for date in all_signal_dates if date >= start_timestamp
+        ]
+        if not filtered_signal_dates:
+            raise ValueError(f"指定的起始日期 {backtest_start_date} 大于所有数据日期")
+        all_signal_dates = filtered_signal_dates
+        print(
+            f"回测起始日期: {backtest_start_date}, 实际开始日期: {all_signal_dates[0].strftime('%Y-%m-%d')}"
+        )
     # =========================== 数据结构初始化 ===========================
-    # 创建账户历史记录表，索引为所有交易日
+    # 创建账户历史记录表，索引为回测期间的交易日
     account_history = pd.DataFrame(
-        index=portfolio_weights.index,
-        # 列1：账户总资产
-        # 列2：持仓市值
-        # 列3：现金账户余额
+        index=pd.Index(all_signal_dates),  # 使用筛选后的日期范围
         columns=["total_account_asset", "holding_market_cap", "cash_account"],
     )
     # 获取所有股票的开盘价格数据（未复权）
@@ -182,7 +205,7 @@ def backtest(
             ]
         )
     )
-    all_signal_dates = portfolio_weights.index.tolist()
+
     # 生成调仓日期列表：每 rebalance_frequency 天调仓一次，最后一天也被包含在调仓日中
     rebalance_dates = sorted(
         set(all_signal_dates[::rebalance_frequency] + [all_signal_dates[-1]])
@@ -190,8 +213,12 @@ def backtest(
 
     # =========================== 开始逐期调仓循环 ===========================
     for i in tqdm(range(0, len(rebalance_dates) - 1)):
+
         rebalance_date = rebalance_dates[i]  # 当前调仓日期
         next_rebalance_date = rebalance_dates[i + 1]  # 下一个调仓日期
+
+        # if rebalance_date == pd.Timestamp("2016-05-27"):
+        #     breakpoint()
 
         # =========================== 获取当前调仓日的目标权重 ===========================
         # 获取当前调仓日的目标权重，并删除缺失值
@@ -287,7 +314,7 @@ def backtest(
         ]  # 更新可用资金为下一调仓日的账户总值
 
         # =========================== 保存账户历史记录 ===========================
-        # 将当前期间的账户数据保存到历史记录中（保疙2位小数）
+        # 将当前期间的账户数据保存到历史记录中（保留2位小数）
         account_history.loc[
             rebalance_date:next_rebalance_date, "total_account_asset"
         ] = round(total_portfolio_value, 2)
@@ -341,12 +368,11 @@ def get_performance_analysis(
     account_result,
     direction,
     neutralize,
-    rebalance_days=20,
     rf=0.03,
     benchmark_index="000985.XSHG",
     factor_name=None,
-    stock_universe=None,
-    save_path=None,
+    start_date=None,
+    end_date=None,
     show_plot=False,
 ):
 
@@ -358,49 +384,48 @@ def get_performance_analysis(
         ],
         axis=1,
     )
-    performance_net = performance.pct_change().dropna(how="all")  # 清算至当日开盘
-    performance_cumnet = (1 + performance_net).cumprod()
-    performance_cumnet["alpha"] = (
-        performance_cumnet["strategy"] / performance_cumnet[benchmark_index]
+    daily_returns = performance.pct_change().dropna(how="all")  # 日收益率
+    cumulative_returns = (1 + daily_returns).cumprod()  # 累计收益
+    cumulative_returns["alpha"] = (
+        cumulative_returns["strategy"] / cumulative_returns[benchmark_index]
     )
-    performance_cumnet = performance_cumnet.fillna(1)
+    cumulative_returns = cumulative_returns.fillna(1)
 
     # 指标计算
-    performance_pct = performance_cumnet.pct_change().dropna()
+    daily_pct_change = cumulative_returns.pct_change().dropna()
 
     # 策略收益
-    strategy_name, benchmark_name, alpha_name = performance_cumnet.columns.tolist()
-    Strategy_Final_Return = performance_cumnet[strategy_name].iloc[-1] - 1
+    strategy_name, benchmark_name, alpha_name = cumulative_returns.columns.tolist()
+    Strategy_Final_Return = cumulative_returns[strategy_name].iloc[-1] - 1
 
     # 策略年化收益
     Strategy_Annualized_Return_EAR = (1 + Strategy_Final_Return) ** (
-        252 / len(performance_cumnet)
+        252 / len(cumulative_returns)
     ) - 1
 
     # 策略年化收益(算术)
-    Strategy_Annualized_Return_AM = performance_pct[strategy_name].mean() * 252
+    Strategy_Annualized_Return_AM = daily_pct_change[strategy_name].mean() * 252
 
     # 基准收益
-    Benchmark_Final_Return = performance_cumnet[benchmark_name].iloc[-1] - 1
+    Benchmark_Final_Return = cumulative_returns[benchmark_name].iloc[-1] - 1
 
     # 基准年化收益
     Benchmark_Annualized_Return_EAR = (1 + Benchmark_Final_Return) ** (
-        252 / len(performance_cumnet)
+        252 / len(cumulative_returns)
     ) - 1
 
     # alpha
     ols_result = sm.OLS(
-        performance_pct[strategy_name] * 252 - rf,
-        sm.add_constant(performance_pct[benchmark_name] * 252 - rf),
+        daily_pct_change[strategy_name] * 252 - rf,
+        sm.add_constant(daily_pct_change[benchmark_name] * 252 - rf),
     ).fit()
     Alpha = ols_result.params[0]
 
     # beta
     Beta = ols_result.params[1]
 
-    # beta_2 = np.cov(performance_pct[strategy_name],performance_pct[benchmark_name])[0,1]/performance_pct[benchmark_name].var()
     # 波动率
-    Strategy_Volatility = performance_pct[strategy_name].std() * np.sqrt(252)
+    Strategy_Volatility = daily_pct_change[strategy_name].std() * np.sqrt(252)
 
     # 夏普
     Strategy_Sharpe = (Strategy_Annualized_Return_EAR - rf) / Strategy_Volatility
@@ -409,7 +434,7 @@ def get_performance_analysis(
     Strategy_Sharpe_AM = (Strategy_Annualized_Return_AM - rf) / Strategy_Volatility
 
     # 下行波动率
-    strategy_ret = performance_pct[strategy_name]
+    strategy_ret = daily_pct_change[strategy_name]
     Strategy_Down_Volatility = strategy_ret[strategy_ret < 0].std() * np.sqrt(252)
 
     # sortino
@@ -417,7 +442,7 @@ def get_performance_analysis(
 
     # 跟踪误差
     Tracking_Error = (
-        performance_pct[strategy_name] - performance_pct[benchmark_name]
+        daily_pct_change[strategy_name] - daily_pct_change[benchmark_name]
     ).std() * np.sqrt(252)
 
     # 信息比率
@@ -425,32 +450,105 @@ def get_performance_analysis(
         Strategy_Annualized_Return_EAR - Benchmark_Annualized_Return_EAR
     ) / Tracking_Error
 
-    # 最大回撤
-    i = np.argmax(
-        (
-            np.maximum.accumulate(performance_cumnet[strategy_name])
-            - performance_cumnet[strategy_name]
+    # 最大回撤计算（分步骤进行）
+    # 第1步：获取策略累计收益序列
+    strategy_cumulative = cumulative_returns[strategy_name]
+
+    # 第2步：计算到每个时点的历史最高点
+    running_max = np.maximum.accumulate(strategy_cumulative)
+
+    # 第3步：计算每个时点的回撤比例
+    drawdown_ratio = (running_max - strategy_cumulative) / running_max
+
+    # 第4步：识别所有回撤周期并计算前三大回撤
+    drawdown_periods = []
+
+    # 找到所有局部峰值点（新高点）
+    is_new_high = strategy_cumulative == running_max
+    peak_indices = strategy_cumulative[is_new_high].index
+
+    # 对每个峰值，找到后续的最大回撤
+    for k in range(len(peak_indices) - 1):
+        peak_idx = peak_indices[k]
+        next_peak_idx = peak_indices[k + 1]
+
+        # 在这个峰值到下个峰值之间找最大回撤
+        period_mask = (strategy_cumulative.index >= peak_idx) & (
+            strategy_cumulative.index < next_peak_idx
         )
-        / np.maximum.accumulate(performance_cumnet[strategy_name])
-    )
-    j = np.argmax(performance_cumnet[strategy_name][:i])
-    Max_Drawdown = (
-        1 - performance_cumnet[strategy_name][i] / performance_cumnet[strategy_name][j]
-    )
+        if period_mask.sum() > 1:  # 确保有足够的数据点
+            period_cumulative = strategy_cumulative[period_mask]
+            period_drawdown = drawdown_ratio[period_mask]
+
+            if (
+                len(period_drawdown) > 0 and period_drawdown.max() > 0.01
+            ):  # 只考虑回撤超过1%的情况
+                trough_idx = period_drawdown.idxmax()
+                peak_value = strategy_cumulative[peak_idx]
+                trough_value = strategy_cumulative[trough_idx]
+                drawdown_pct = period_drawdown.max()
+
+                drawdown_periods.append(
+                    {
+                        "peak_date": peak_idx,
+                        "trough_date": trough_idx,
+                        "peak_value": peak_value,
+                        "trough_value": trough_value,
+                        "drawdown": drawdown_pct,
+                    }
+                )
+
+    # 处理最后一个峰值到结束的回撤
+    if len(peak_indices) > 0:
+        last_peak_idx = peak_indices[-1]
+        period_mask = strategy_cumulative.index >= last_peak_idx
+        period_cumulative = strategy_cumulative[period_mask]
+        period_drawdown = drawdown_ratio[period_mask]
+
+        if len(period_drawdown) > 0 and period_drawdown.max() > 0.01:
+            trough_idx = period_drawdown.idxmax()
+            peak_value = strategy_cumulative[last_peak_idx]
+            trough_value = strategy_cumulative[trough_idx]
+            drawdown_pct = period_drawdown.max()
+
+            drawdown_periods.append(
+                {
+                    "peak_date": last_peak_idx,
+                    "trough_date": trough_idx,
+                    "peak_value": peak_value,
+                    "trough_value": trough_value,
+                    "drawdown": drawdown_pct,
+                }
+            )
+
+    # 按回撤幅度排序，取前三大
+    drawdown_periods.sort(key=lambda x: x["drawdown"], reverse=True)
+    top_3_drawdowns = drawdown_periods[:3]
+
+    print("\n=== 前三大回撤分析 ===")
+    for i, dd in enumerate(top_3_drawdowns, 1):
+        print(f"第{i}大回撤:")
+        print(f"  峰值日期: {dd['peak_date']} (净值: {dd['peak_value']:.4f})")
+        print(f"  谷值日期: {dd['trough_date']} (净值: {dd['trough_value']:.4f})")
+        print(f"  回撤幅度: {dd['drawdown']:.4f} ({dd['drawdown']*100:.2f}%)")
+        print()
+
+    # 第5步：获取最大回撤值
+    Max_Drawdown = top_3_drawdowns[0]["drawdown"] if top_3_drawdowns else 0
 
     # 卡玛比率
     Calmar = (Strategy_Annualized_Return_EAR) / Max_Drawdown
 
     # 超额收益
-    Alpha_Final_Return = performance_cumnet[alpha_name].iloc[-1] - 1
+    Alpha_Final_Return = cumulative_returns[alpha_name].iloc[-1] - 1
 
     # 超额年化收益
     Alpha_Annualized_Return_EAR = (1 + Alpha_Final_Return) ** (
-        252 / len(performance_cumnet)
+        252 / len(cumulative_returns)
     ) - 1
 
     # 超额波动率
-    Alpha_Volatility = performance_pct[alpha_name].std() * np.sqrt(252)
+    Alpha_Volatility = daily_pct_change[alpha_name].std() * np.sqrt(252)
 
     # 超额夏普
     Alpha_Sharpe = (Alpha_Annualized_Return_EAR - rf) / Alpha_Volatility
@@ -458,22 +556,22 @@ def get_performance_analysis(
     # 超额最大回撤
     i = np.argmax(
         (
-            np.maximum.accumulate(performance_cumnet[alpha_name])
-            - performance_cumnet[alpha_name]
+            np.maximum.accumulate(cumulative_returns[alpha_name])
+            - cumulative_returns[alpha_name]
         )
-        / np.maximum.accumulate(performance_cumnet[alpha_name])
+        / np.maximum.accumulate(cumulative_returns[alpha_name])
     )
-    j = np.argmax(performance_cumnet[alpha_name][:i])
+    j = np.argmax(cumulative_returns[alpha_name][:i])
     Alpha_Max_Drawdown = (
-        1 - performance_cumnet[alpha_name][i] / performance_cumnet[alpha_name][j]
+        1 - cumulative_returns[alpha_name][i] / cumulative_returns[alpha_name][j]
     )
 
     # 胜率
-    performance_pct["win"] = performance_pct[alpha_name] > 0
-    Win_Ratio = performance_pct["win"].value_counts().loc[True] / len(performance_pct)
+    daily_pct_change["win"] = daily_pct_change[alpha_name] > 0
+    Win_Ratio = daily_pct_change["win"].value_counts().loc[True] / len(daily_pct_change)
 
     # 盈亏比
-    profit_lose = performance_pct.groupby("win")[alpha_name].mean()
+    profit_lose = daily_pct_change.groupby("win")[alpha_name].mean()
     Profit_Lose_Ratio = abs(profit_lose[True] / profit_lose[False])
 
     result = {
@@ -502,96 +600,19 @@ def get_performance_analysis(
         "盈亏比": round(Profit_Lose_Ratio, 4),
     }
 
-    # 创建分离式策略报告：收益曲线图 + 绩效指标表
-    import matplotlib.pyplot as plt
-    from matplotlib import rcParams
-    import os
+    # 分别为收益曲线和指标表格创建独立目录
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M")
+    charts_dir = "/Users/didi/KDCJ/alpha_local/outputs/reports/performance_charts"
+    tables_dir = "/Users/didi/KDCJ/alpha_local/outputs/reports/metrics_tables"
+    os.makedirs(charts_dir, exist_ok=True)
+    os.makedirs(tables_dir, exist_ok=True)
 
-    # 设置中文字体
-    rcParams["font.sans-serif"] = ["SimHei", "Arial Unicode MS", "DejaVu Sans"]
-    rcParams["axes.unicode_minus"] = False
+    chart_filename = f"{factor_name}_{benchmark_index}_{direction}_{neutralize}_{start_date}_{end_date}_{timestamp}_performance_chart.png"
+    table_filename = f"{factor_name}_{benchmark_index}_{direction}_{neutralize}_{start_date}_{end_date}_{timestamp}_metrics_table.png"
+    chart_path = os.path.join(charts_dir, chart_filename)
+    table_path = os.path.join(tables_dir, table_filename)
 
-    # 生成文件名和路径
-    if factor_name and stock_universe is not None:
-        from datetime import datetime
-
-        start_date = stock_universe.index[0].strftime("%Y-%m-%d")
-        end_date = stock_universe.index[-1].strftime("%Y-%m-%d")
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M")
-
-        # 分别为收益曲线和指标表格创建独立目录
-        charts_dir = "/Users/didi/KDCJ/alpha_local/outputs/reports/performance_charts"
-        tables_dir = "/Users/didi/KDCJ/alpha_local/outputs/reports/metrics_tables"
-        os.makedirs(charts_dir, exist_ok=True)
-        os.makedirs(tables_dir, exist_ok=True)
-
-        chart_filename = f"{factor_name}_{benchmark_index}_{direction}_{neutralize}_{start_date}_{end_date}_{rebalance_days}_performance_chart.png"
-        table_filename = f"{factor_name}_{benchmark_index}_{direction}_{neutralize}_{start_date}_{end_date}_{rebalance_days}_metrics_table.png"
-        chart_path = os.path.join(charts_dir, chart_filename)
-        table_path = os.path.join(tables_dir, table_filename)
-
-    # ==================== 图1：收益曲线图 ====================
-    fig1, ax1 = plt.subplots(figsize=(16, 9))  # 16:9比例，更适合时间序列
-
-    # 绘制策略和基准收益曲线
-    ax1.plot(
-        performance_cumnet.index,
-        performance_cumnet[strategy_name],
-        color="#1f77b4",
-        linewidth=2.5,
-        label="策略收益",
-        alpha=0.9,
-    )
-    ax1.plot(
-        performance_cumnet.index,
-        performance_cumnet[benchmark_name],
-        color="#ff7f0e",
-        linewidth=2.5,
-        label="基准收益",
-        alpha=0.9,
-    )
-
-    # 创建第二个y轴显示超额收益
-    ax2 = ax1.twinx()
-    ax2.plot(
-        performance_cumnet.index,
-        performance_cumnet[alpha_name],
-        color="#2ca02c",
-        linewidth=2,
-        alpha=0.7,
-        label="超额收益",
-    )
-    ax2.set_ylabel("超额收益", color="#2ca02c", fontsize=12)
-    ax2.tick_params(axis="y", labelcolor="#2ca02c")
-
-    # 设置主图样式
-    ax1.set_title(
-        f'{factor_name or "策略"}_收益曲线分析', fontsize=18, fontweight="bold", pad=20
-    )
-    ax1.set_xlabel("日期", fontsize=12)
-    ax1.set_ylabel("累积收益", fontsize=12)
-    ax1.grid(True, alpha=0.3, linestyle="--")
-    ax1.legend(loc="upper left", fontsize=11)
-    ax2.legend(loc="upper right", fontsize=11)
-
-    # 美化图表
-    ax1.spines["top"].set_visible(False)
-    ax1.spines["right"].set_visible(False)
-    ax2.spines["top"].set_visible(False)
-
-    plt.tight_layout()
-
-    # 保存收益曲线图
-    if factor_name and stock_universe is not None:
-        plt.savefig(chart_path, dpi=300, bbox_inches="tight", facecolor="white")
-        print(f"收益曲线图已保存到: {chart_path}")
-
-    if show_plot:
-        plt.show()
-    else:
-        plt.close()
-
-    # ==================== 图2：绩效指标表 ====================
+    # ==================== 图1：绩效指标表 ====================
     fig2, ax3 = plt.subplots(figsize=(12, 16))  # 竖向布局，适合表格
     ax3.axis("off")
 
@@ -603,6 +624,21 @@ def get_performance_analysis(
     table_data = []
     for idx, row in result_df.iterrows():
         table_data.append([idx, f"{row['数值']:.4f}"])
+
+    # 添加回撤区间信息
+    try:
+        if len(top_3_drawdowns) > 0:
+            table_data.append(["回撤区间分析", ""])
+            for i, dd in enumerate(top_3_drawdowns, 1):
+                peak_date_str = dd["peak_date"].strftime("%Y-%m-%d")
+                trough_date_str = dd["trough_date"].strftime("%Y-%m-%d")
+                period_str = f"{peak_date_str} ~ {trough_date_str}"
+                drawdown_str = f"{dd['drawdown']*100:.2f}%"
+                table_data.append([f"第{i}大回撤区间", period_str])
+                table_data.append([f"第{i}大回撤幅度", drawdown_str])
+    except NameError:
+        # 如果top_3_drawdowns变量不存在，则跳过
+        pass
 
     # 绘制表格
     table = ax3.table(
@@ -634,21 +670,82 @@ def get_performance_analysis(
     # 添加标题
     ax3.text(
         0.5,
-        0.95,
-        f'{factor_name or "策略"}_绩效指标表',
+        1.00,
+        f'{factor_name or "策略"}_绩效指标表_{start_date}_{end_date}',
         transform=ax3.transAxes,
         fontsize=18,
         fontweight="bold",
         ha="center",
-        va="top",
+        va="bottom",
     )
 
     plt.tight_layout()
 
     # 保存绩效指标表
-    if factor_name and stock_universe is not None:
+    if factor_name:
         plt.savefig(table_path, dpi=300, bbox_inches="tight", facecolor="white")
-        print(f"绩效指标表已保存到: {table_path}")
+        # print(f"绩效指标表已保存到: {table_path}")
+
+    if show_plot:
+        plt.show()
+    else:
+        plt.close()
+
+    # ==================== 图1：收益曲线图 ====================
+    fig1, ax1 = plt.subplots(figsize=(16, 9))  # 16:9比例，更适合时间序列
+
+    # 绘制策略和基准收益曲线
+    ax1.plot(
+        cumulative_returns.index,
+        cumulative_returns[strategy_name],
+        color="#1f77b4",
+        linewidth=2.5,
+        label="策略收益",
+        alpha=0.9,
+    )
+    ax1.plot(
+        cumulative_returns.index,
+        cumulative_returns[benchmark_name],
+        color="#ff7f0e",
+        linewidth=2.5,
+        label="基准收益",
+        alpha=0.9,
+    )
+
+    # 创建第二个y轴显示超额收益
+    ax2 = ax1.twinx()
+    ax2.plot(
+        cumulative_returns.index,
+        cumulative_returns[alpha_name],
+        color="#2ca02c",
+        linewidth=2,
+        alpha=0.7,
+        label="超额收益",
+    )
+    ax2.set_ylabel("超额收益", color="#2ca02c", fontsize=12)
+    ax2.tick_params(axis="y", labelcolor="#2ca02c")
+
+    # 设置主图样式
+    ax1.set_title(
+        f'{factor_name or "策略"}_收益曲线分析_{start_date}_{end_date}', fontsize=18, fontweight="bold", pad=20
+    )
+    ax1.set_xlabel("日期", fontsize=12)
+    ax1.set_ylabel("累积收益", fontsize=12)
+    ax1.grid(True, alpha=0.3, linestyle="--")
+    ax1.legend(loc="upper left", fontsize=11)
+    ax2.legend(loc="upper right", fontsize=11)
+
+    # 美化图表
+    ax1.spines["top"].set_visible(False)
+    ax1.spines["right"].set_visible(False)
+    ax2.spines["top"].set_visible(False)
+
+    plt.tight_layout()
+
+    # 保存收益曲线图
+    if factor_name:
+        plt.savefig(chart_path, dpi=300, bbox_inches="tight", facecolor="white")
+        # print(f"收益曲线图已保存到: {chart_path}")
 
     if show_plot:
         plt.show()
@@ -658,4 +755,4 @@ def get_performance_analysis(
     # 打印结果表格到控制台
     print(pd.DataFrame([result]).T)
 
-    return performance_cumnet, result
+    return cumulative_returns, result
