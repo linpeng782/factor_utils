@@ -916,7 +916,7 @@ def plot_factor_layered_analysis(
     group_annual_ret_excess.plot(
         kind="bar",
         ax=ax1,
-        title=f"{factor_name}_分层超额年化收益_单调性{corr_value}_{direction}",
+        title=f"{factor_name}_分层超额年化收益_单调性{corr_value}_{neutralize}_{direction}",
     )
     ax1.set_xlabel("分组")
     ax1.set_ylabel("超额年化收益")
@@ -954,7 +954,9 @@ def plot_factor_layered_analysis(
             label=label,
         )
 
-    ax2.set_title(f"{factor_name}_分层净值表现")
+    ax2.set_title(
+        f"{factor_name}_分层净值表现_单调性{corr_value}_{neutralize}_{direction}"
+    )
     ax2.legend(bbox_to_anchor=(1.05, 1), loc="upper left", ncol=1, fontsize=8)
     ax2.grid(True, alpha=0.3)
     ax2.set_xlabel("日期")
@@ -971,7 +973,10 @@ def plot_factor_layered_analysis(
         year_colors = base_colors[:num_years]
 
     yby_performance.plot(
-        kind="bar", ax=ax3, title=f"{factor_name}_逐年分层年化收益", color=year_colors
+        kind="bar",
+        ax=ax3,
+        title=f"{factor_name}_逐年分层年化收益_单调性{corr_value}_{neutralize}_{direction}",
+        color=year_colors,
     )
 
     # 修改图例显示：完全平铺，只显示年份

@@ -684,7 +684,7 @@ def get_performance_analysis(
     ax3.text(
         0.5,
         1.00,
-        f'{factor_name or "策略"}_绩效指标表_{start_date}_{end_date}',
+        f'{factor_name or "策略"}_绩效指标表_{neutralize}_{start_date}_{end_date}',
         transform=ax3.transAxes,
         fontsize=18,
         fontweight="bold",
@@ -740,7 +740,7 @@ def get_performance_analysis(
 
     # 设置主图样式
     ax1.set_title(
-        f'{factor_name or "策略"}_收益曲线分析_{start_date}_{end_date}',
+        f'{factor_name or "策略"}_收益曲线分析_{neutralize}_{start_date}_{end_date}',
         fontsize=18,
         fontweight="bold",
         pad=20,

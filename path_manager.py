@@ -45,6 +45,7 @@ def get_data_path(data_type, filename=None, auto_create=True, **kwargs):
         "layered_report": "outputs/reports/layered_analysis",
         "metrics_table": "outputs/reports/metrics_tables",
         "performance_chart": "outputs/reports/performance_charts",
+        "strategy_comparison": "outputs/reports/strategy_comparison",
         "account_result": "data/account_result",
     }
 
@@ -60,7 +61,8 @@ def get_data_path(data_type, filename=None, auto_create=True, **kwargs):
         "layered_report": "{factor_name}_{index_item}_{direction}_{neutralize}_{start_date}_{end_date}_{rebalance_days}_layered.png",
         "metrics_table": "{factor_name}_{benchmark_index}_{direction}_{neutralize}_{start_date}_{end_date}_metrics_table.png",
         "performance_chart": "{factor_name}_{benchmark_index}_{direction}_{neutralize}_{start_date}_{end_date}_performance_chart.png",
-        "account_result": "{start_date}_{end_date}_{factor_name}_account_result.pkl",
+        "strategy_comparison": "{benchmark_name}_{benchmark_neutralize}_vs_{strategy_name}_{strategy_neutralize}_{index_item}_{start_date}_{end_date}_comparison.png",
+        "account_result": "{factor_name}_{index_item}_{direction}_{neutralize}_{start_date}_{end_date}_account_result.pkl",
     }
 
     if data_type not in path_mapping:
@@ -79,12 +81,12 @@ def get_data_path(data_type, filename=None, auto_create=True, **kwargs):
     alpha_local_path = "/Users/didi/KDCJ/alpha_local"
 
     # 对于报告类型，根据index_item和日期创建子文件夹
-    report_types = ["ic_report", "layered_report", "metrics_table", "performance_chart"]
+    report_types = ["ic_report", "layered_report", "metrics_table", "performance_chart", "strategy_comparison"]
     # 对于因子数据类型，根据index_item创建子文件夹
     factor_types = ["factor_raw", "factor_processed"]
-    # 对于回测结果，添加日期文件夹
-    date_classified_types = ["account_result"]
-    
+    # 对于回测结果，按指数、日期和中性化状态分类
+    account_result_types = ["account_result"]
+
     if data_type in report_types and "index_item" in kwargs:
         index_folder = kwargs["index_item"]
         # 添加日期文件夹（格式：YYYYMMDD）
@@ -98,21 +100,39 @@ def get_data_path(data_type, filename=None, auto_create=True, **kwargs):
             date_folder,
             filename,
         )
-    elif data_type in date_classified_types:
-        # 回测结果按日期分类存放
+    elif data_type in account_result_types:
+        # 回测结果按指数、日期和中性化状态分类存放
         from datetime import datetime
-        
+
+        if "index_item" not in kwargs:
+            raise ValueError(f"数据类型 {data_type} 需要提供 index_item 参数")
+
+        index_folder = kwargs["index_item"]
         date_folder = datetime.now().strftime("%Y%m%d")
-        full_path = os.path.join(
-            alpha_local_path,
-            path_mapping[data_type],
-            date_folder,
-            filename,
-        )
+
+        # 如果提供了neutralize参数，则进一步按中性化状态分类
+        if "neutralize" in kwargs:
+            neutralize_folder = "True" if kwargs["neutralize"] else "False"
+            full_path = os.path.join(
+                alpha_local_path,
+                path_mapping[data_type],
+                index_folder,
+                date_folder,
+                neutralize_folder,
+                filename,
+            )
+        else:
+            full_path = os.path.join(
+                alpha_local_path,
+                path_mapping[data_type],
+                index_folder,
+                date_folder,
+                filename,
+            )
     elif data_type in factor_types and "index_item" in kwargs:
         # 因子数据按指数分类存放，不需要日期文件夹
         index_folder = kwargs["index_item"]
-        
+
         # 对于processed因子，进一步按neutralize分类
         if data_type == "factor_processed" and "neutralize" in kwargs:
             neutralize_folder = "True" if kwargs["neutralize"] else "False"
