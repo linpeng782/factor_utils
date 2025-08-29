@@ -28,72 +28,9 @@ plt.rcParams["font.sans-serif"] = [
 plt.rcParams["axes.unicode_minus"] = False
 
 import warnings
+from factor_utils.path_manager import get_data_path
 
 warnings.filterwarnings("ignore")
-
-
-# ==================== 数据路径管理 ====================
-
-
-def get_data_path(data_type, filename=None, auto_create=True, **kwargs):
-    """
-    统一的数据路径管理函数
-
-    参数:
-        data_type: 数据类型
-            - 'combo_mask': 组合掩码数据 -> data/cache/combo_masks/
-            - 'return_1d': 日收益率数据 -> data/cache/returns/
-            - 'industry_market': 行业市值数据 -> data/cache/industry/
-            - 'open_price': 开盘价数据 -> data/cache/open_price/
-            - 'factor_raw': 原始因子数据 -> data/factor_lib/raw/
-            - 'factor_processed': 处理后因子数据 -> data/factor_lib/processed/
-        filename: 文件名（可选，如果不提供则根据kwargs自动生成）
-        auto_create: 是否自动创建目录
-        **kwargs: 用于生成文件名的参数
-
-    返回:
-        完整的文件路径
-    """
-
-    # 路径映射
-    path_mapping = {
-        "combo_mask": "data/cache/combo_masks",
-        "return_1d": "data/cache/returns",
-        "industry_market": "data/cache/industry",
-        "open_price": "data/cache/open_price",
-        "factor_raw": "data/factor_lib/raw",
-        "factor_processed": "data/factor_lib/processed",
-    }
-
-    # 文件名模板
-    filename_templates = {
-        "combo_mask": "combo_mask_{index_item}_{start_date}_{end_date}.pkl",
-        "return_1d": "return_1d_{index_item}_{start}_{end}.pkl",
-        "industry_market": "df_industry_market_{industry_type}_{index_item}_{start}_{end}.pkl",
-        "open_price": "open_{index_item}_{start}_{end}.pkl",
-    }
-
-    if data_type not in path_mapping:
-        raise ValueError(
-            f"不支持的数据类型: {data_type}。支持的类型: {list(path_mapping.keys())}"
-        )
-
-    # 生成文件名
-    if filename is None:
-        if data_type in filename_templates:
-            filename = filename_templates[data_type].format(**kwargs)
-        else:
-            raise ValueError(f"数据类型 {data_type} 需要提供 filename 参数")
-
-    # 使用固定的绝对路径
-    alpha_local_path = "/Users/didi/KDCJ/alpha_local"
-    full_path = os.path.join(alpha_local_path, path_mapping[data_type], filename)
-
-    # 自动创建目录
-    if auto_create:
-        os.makedirs(os.path.dirname(full_path), exist_ok=True)
-
-    return full_path
 
 
 # 热力图
@@ -216,28 +153,45 @@ def get_suspended_filter(stock_list, date_list):
 
 
 # 涨停过滤 （开盘无法买入）
-def get_limit_up_filter(stock_list, date_list):
+def get_limit_up_filter(stock_list, date_list, index_item):
     """
     :param stock_list: 股票池 -> list
     :param date_list: 研究周期 -> list
-    :return limit_up_filter: 涨停过滤券池 -> unstack
+    :return limit_up_filter: 涨停过滤券池 -> unstack∏
     """
-    # 涨停时返回为1,非涨停返回为0
-    price = get_price(
-        stock_list,
-        date_list[0],
-        date_list[-1],
-        adjust_type="none",
-        fields=["open", "limit_up"],
-    )
-    df = (
-        (price["open"] == price["limit_up"])
-        .unstack("order_book_id")
-        .shift(-1)
-        .fillna(False)
+
+    new_path = get_data_path(
+        "limit_up",
+        index_item=index_item,
+        start_date=date_list[0].strftime("%F"),
+        end_date=date_list[-1].strftime("%F"),
     )
 
-    return df
+    try:
+        limit_up_mask = pd.read_pickle(new_path)
+        print(f"✅过滤涨停：加载limit_up_mask {new_path}")
+    except:
+        print(f"✅过滤涨停：计算新的limit_up_mask...")
+
+        price = get_price(
+            stock_list,
+            date_list[0],
+            date_list[-1],
+            adjust_type="none",
+            fields=["open", "limit_up"],
+        )
+        limit_up_mask = (
+            (price["open"] == price["limit_up"])
+            .unstack("order_book_id")
+            .shift(-1)
+            .fillna(False)
+        )
+
+        # 保存limit_up_mask
+        limit_up_mask.to_pickle(new_path)
+        print(f"✅过滤涨停：保存limit_up_mask {new_path}")
+
+    return limit_up_mask
 
 
 # 离群值处理
@@ -347,9 +301,9 @@ def neutralization_vectorized(
     # 尝试加载数据
     try:
         df_industry_market = pd.read_pickle(new_path)
-        print(f"✅加载industry_market: {new_path}")
+        print(f"✅行业市值中性化:加载industry_market: {new_path}")
     except:
-        print(f"✅计算新的industry_market...")
+        print(f"✅行业市值中性化:计算新的industry_market...")
 
     # 如果没有找到，则重新计算
     if df_industry_market is None:
@@ -371,7 +325,7 @@ def neutralization_vectorized(
 
         # 保存到新路径
         df_industry_market.to_pickle(new_path)
-        print(f"✅保存industry_market: {new_path}")
+        print(f"✅行业市值中性化:保存industry_market: {new_path}")
 
     df_industry_market["factor"] = factor.stack()
     df_industry_market.dropna(subset="factor", inplace=True)
@@ -471,8 +425,8 @@ def calc_ic(
     # 因子报告
     ic_report = {
         "factor_name": factor_name,
-        "neutralized": neutralize,
         "direction": direction,
+        "neutralized": neutralize,
         "rebalance_days": rebalance_days,
         "IC_mean": round(ic_values.mean(), 4),
         "IC_std": round(ic_values.std(), 4),
@@ -541,14 +495,17 @@ def calc_ic(
 
     start_date = df.index[0].strftime("%Y-%m-%d")
     end_date = df.index[-1].strftime("%Y-%m-%d")
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M")
 
-    png_filename = f"{factor_name}_{index_item}_{direction}_{neutralize}_{start_date}_{end_date}_IC.png"
-
-    reports_dir = "/Users/didi/KDCJ/alpha_local/outputs/reports/IC_analysis"
-    os.makedirs(reports_dir, exist_ok=True)
-
-    png_save_path = os.path.join(reports_dir, png_filename)
+    # 使用get_data_path生成路径，根据index_item分类存放
+    png_save_path = get_data_path(
+        "ic_report",
+        factor_name=factor_name,
+        index_item=index_item,
+        direction=direction,
+        neutralize=neutralize,
+        start_date=start_date,
+        end_date=end_date,
+    )
 
     # 保存PNG图片
     plt.savefig(png_save_path, dpi=300, bbox_inches="tight", facecolor="white")
@@ -561,245 +518,36 @@ def calc_ic(
     return ic_values, ic_report_df
 
 
-# 分组回测
-#def group_g(df, n, g, index_item, name="", rebalance=False):
-    """
-    :param df: 因子值 -> unstack
-    :param n: 调仓日 -> int
-    :param g: 分组数量 -> int
-    :param index_item: 券池名 -> str
-    :param name: 因子名 -> str
-    :param rebalance: 是否rebalance -> bool
-    :return group_return: 各分组日收益率 -> dataframe
-    :return turnover_ratio: 各分组日调仓日换手率 -> dataframe
-    """
-
-    # 信号向后移动一天
-    df = df.shift(1).iloc[1:]
-
-    # 基础数据获取
-    order_book_ids = df.columns.tolist()
-    datetime_period = df.index
-    start = datetime_period.min().strftime("%F")
-    end = datetime_period.max().strftime("%F")
-
-    # 提取预存储数据
-    # 尝试从路径读取return_1d数据
-    new_path = get_data_path("return_1d", index_item=index_item, start=start, end=end)
-
-    return_1d = None
-
-    # 尝试加载数据
-    try:
-        return_1d = pd.read_pickle(new_path)
-        print(f"加载return_1d: {new_path}")
-    except:
-        print(f"计算新的return_1d...")
-
-    # 如果没有找到，则重新计算
-    if return_1d is None:
-        # 拿一个完整的券池表格，防止有些股票在某些日期没有数据，导致缓存数据不全，影响其他因子计算
-        index_fix = INDEX_FIX(start, end, index_item)
-        order_book_ids = index_fix.columns.tolist()
-        # 未来一天收益率
-        open = get_price(
-            order_book_ids,
-            start,
-            get_next_trading_date(end, 1),
-            "1d",
-            "open",
-            "pre",
-            False,
-            True,
-        ).open.unstack("order_book_id")
-        return_1d = open.pct_change().shift(-1).dropna(axis=0, how="all").stack()
-
-        # 保存到新路径
-        return_1d.to_pickle(new_path)
-        print(f"保存return_1d: {new_path}")
-
-    # 数据和收益合并
-    group = df.stack().to_frame("factor")
-    group["current_renturn"] = return_1d
-    group = group.dropna()
-    group.reset_index(inplace=True)
-    group.columns = ["date", "stock", "factor", "current_renturn"]
-
-    # 换手率 和 分组收益率表格
-    turnover_ratio = pd.DataFrame()
-    group_return = pd.DataFrame()
-
-    datetime_period = pd.to_datetime(group.date.unique())
-
-    # 按步长周期调仓
-    for i in range(0, len(datetime_period) - 1, n):  # -1 防止刚好切到最后一天没法计算
-        # 截面分组
-        single = group[group.date == datetime_period[i]].sort_values(by="factor")
-        # 根据值的大小进行切分
-        single.loc[:, "group"] = pd.qcut(
-            single.factor, g, list(range(1, g + 1))
-        ).to_list()
-        group_dict = {}
-        # 分组内的股票
-        for j in range(1, g + 1):
-            group_dict[j] = single[single.group == j].stock.tolist()
-
-        # 计算换手率
-        turnover_ratio_temp = []
-        if i == 0:
-            # 首期分组成分股 存入历史
-            temp_group_dict = group_dict
-        else:
-            # 分组计算换手率
-            for j in range(1, g + 1):
-                turnover_ratio_temp.append(
-                    len(list(set(temp_group_dict[j]).difference(set(group_dict[j]))))
-                    / len(set(temp_group_dict[j]))
-                )
-            # 存储分组换手率
-            turnover_ratio = pd.concat(
-                [
-                    turnover_ratio,
-                    pd.DataFrame(
-                        turnover_ratio_temp,
-                        index=["G{}".format(j) for j in list(range(1, g + 1))],
-                        columns=[datetime_period[i]],
-                    ).T,
-                ],
-                axis=0,
-            )
-            # 存入历史
-            temp_group_dict = group_dict
-
-        # 获取周期
-        # 不够一个调仓周期，剩下的都是最后一个周期
-        if i < len(datetime_period) - n:
-            period = group[group.date.isin(datetime_period[i : i + n])]
-        else:
-            # 完整周期
-            period = group[group.date.isin(datetime_period[i:])]
-
-        if i == 2540:
-            breakpoint()
-
-        # 计算各分组收益率（期间不rebalance权重）
-        group_return_temp = []
-        for j in range(1, g + 1):
-            if rebalance:
-                # 横截面汇总
-                group_ret = period[period.stock.isin(group_dict[j])]
-                group_ret = group_ret.set_index(
-                    ["date", "stock"]
-                ).current_renturn.unstack("stock")
-                group_ret_combine_ret = group_ret.mean(axis=1)
-
-            else:
-                # 组内各标的数据
-                group_ret = period[period.stock.isin(group_dict[j])]
-                group_ret = group_ret.set_index(
-                    ["date", "stock"]
-                ).current_renturn.unstack("stock")
-                # 标的累计收益
-                group_ret_combine_cumnet = (1 + group_ret).cumprod().mean(axis=1)
-                # 组合的逐期收益
-                group_ret_combine_ret = group_ret_combine_cumnet.pct_change()
-                # 第一期填补
-                group_ret_combine_ret.iloc[0] = group_ret.iloc[0].mean()
-
-            # 合并各分组
-            group_return_temp.append(group_ret_combine_ret)
-
-        # 每个步长期间的收益合并
-        group_return = pd.concat(
-            [
-                group_return,
-                pd.DataFrame(
-                    group_return_temp,
-                    index=["G{}".format(j) for j in list(range(1, g + 1))],
-                ).T,
-            ],
-            axis=0,
-        )
-        # 进度
-        print("\r 当前：{} / 总量：{}".format(i, len(datetime_period)), end="")
-
-    # 基准，各组的平均收益
-    group_return["Benchmark"] = group_return.mean(axis=1)
-    group_return = (group_return + 1).cumprod()
-    # 年化收益计算
-    group_annual_ret = group_return.iloc[-1] ** (252 / len(group_return)) - 1
-    group_annual_ret -= group_annual_ret.Benchmark
-    group_annual_ret = group_annual_ret.drop("Benchmark").to_frame("annual_ret")
-    group_annual_ret["group"] = list(range(1, g + 1))
-    corr_value = round(group_annual_ret.corr(method="spearman").iloc[0, 1], 4)
-    group_annual_ret.annual_ret.plot(
-        kind="bar", figsize=(10, 5), title=f"{name}_分层超额年化收益_单调性{corr_value}"
-    )
-
-    # 净值表现图 - 优化图例显示
-    ax = group_return.plot(figsize=(10, 5), title=f"{name}_分层净值表现")
-    ax.legend(bbox_to_anchor=(1.05, 1), loc="upper left", ncol=1, fontsize=8)
-
-    yby_performance = (
-        group_return.pct_change()
-        .resample("Y")
-        .apply(lambda x: (1 + x).cumprod().iloc[-1])
-        .T
-    )
-    yby_performance -= yby_performance.loc["Benchmark"]
-    yby_performance = yby_performance.replace(0, np.nan).dropna(how="all")
-
-    # 定义丰富的颜色调色板
-    colors = [
-        "#FF6B6B",  # 珊瑚红
-        "#4ECDC4",  # 青绿色
-        "#45B7D1",  # 天蓝色
-        "#96CEB4",  # 薄荷绿
-        "#FFEAA7",  # 浅黄色
-        "#DDA0DD",  # 梅花色
-        "#98D8C8",  # 薄荷蓝
-        "#F7DC6F",  # 金黄色
-        "#BB8FCE",  # 淡紫色
-        "#85C1E9",  # 浅蓝色
-    ]
-
-    # 逐年分层年化收益图 - 优化颜色和图例
-    ax = yby_performance.plot(
-        kind="bar",
-        figsize=(12, 6),
-        title=f"{name}_逐年分层年化收益",
-        color=colors[: len(yby_performance.columns)],
-    )
-    # 设置图例为水平排列，位置在图下方
-    ax.legend(bbox_to_anchor=(0.5, -0.15), loc="upper center", ncol=5, fontsize=9)
-
-    return group_return, turnover_ratio
-
-
 # 数据清洗封装函数：券池清洗、离群值处理、标准化处理、中性化处理、涨停过滤
-def preprocess_factor(factor, stock_universe, index_item):
+def preprocess_raw_factor(
+    factor_name,
+    raw_factor,
+    index_item,
+    direction,
+    neutralize,
+    stock_universe,
+):
 
     stock_list = stock_universe.columns.tolist()
     date_list = stock_universe.index.tolist()
-    start_date = date_list[0].strftime("%F")
-    end_date = date_list[-1].strftime("%F")
+    universe_start = date_list[0].strftime("%F")
+    universe_end = date_list[-1].strftime("%F")
 
     # 尝试从路径读取combo_mask
     new_path = get_data_path(
-        "combo_mask", index_item=index_item, start_date=start_date, end_date=end_date
+        "combo_mask",
+        index_item=index_item,
+        start_date=universe_start,
+        end_date=universe_end,
     )
-
-    combo_mask = None
 
     # 尝试加载数据
     try:
         combo_mask = pd.read_pickle(new_path)
-        print(f"✅加载combo_mask: {new_path}")
+        print(f"✅过滤新股、ST、停牌：加载combo_mask {new_path}")
     except:
-        print(f"✅计算新的combo_mask...")
+        print(f"✅过滤新股、ST、停牌：计算新的combo_mask...")
 
-    # 如果没有找到，则重新计算
-    if combo_mask is None:
         #  新股过滤
         new_stock_filter = get_new_stock_filter(stock_list, date_list)
         # st过滤
@@ -819,83 +567,59 @@ def preprocess_factor(factor, stock_universe, index_item):
         print(f"✅保存combo_mask: {new_path}")
 
     # axis=1,过滤掉所有日期截面都是nan的股票
-    factor = factor.mask(~combo_mask).dropna(axis=1, how="all")
+    # factor = factor.mask(~combo_mask).dropna(axis=1, how="all")
+    factor = raw_factor.mask(~combo_mask)
+    # factor = factor.dropna(axis=1, how="all")
+    # print("删除全列nan后的因子 shape:", factor.shape)
 
-    # 离群值处理
-    factor = mad_vectorized(factor)
+    if neutralize:
+        # 离群值处理
+        factor = mad_vectorized(factor)
 
-    # 标准化处理
-    factor = standardize(factor)
+        # 标准化处理
+        factor = standardize(factor)
 
-    # 中性化处理
-    factor = neutralization_vectorized(factor, stock_list)
+        # 中性化处理
+        factor = neutralization_vectorized(factor, stock_list)
+        print("✅中性化后的因子 shape:", factor.shape)
+    else:
+        print(f"✅{factor_name}_{index_item}_{direction}未进行中性化处理")
 
     # 涨停过滤
-    limit_up_filter = get_limit_up_filter(stock_list, date_list)
+    limit_up_filter = get_limit_up_filter(stock_list, date_list, index_item)
     factor = factor.mask(limit_up_filter)
 
-    return factor
-
-
-# 数据清洗封装函数：券池清洗、涨停过滤
-def preprocess_factor_without_neutralization(factor, stock_universe, index_item):
-
-    stock_list = stock_universe.columns.tolist()
-    date_list = stock_universe.index.tolist()
-    start_date = date_list[0].strftime("%F")
-    end_date = date_list[-1].strftime("%F")
-
-    # 尝试从路径读取combo_mask
-    new_path = get_data_path(
-        "combo_mask", index_item=index_item, start_date=start_date, end_date=end_date
+    # 4. 保存因子数据
+    processed_path = get_data_path(
+        "factor_processed",
+        filename=f"{factor_name}_{index_item}_{direction}_{neutralize}_{universe_start}_{universe_end}.pkl",
+        index_item=index_item,
+        neutralize=neutralize,
     )
-
-    combo_mask = None
-
-    # 尝试加载数据
-    try:
-        combo_mask = pd.read_pickle(new_path)
-        print(f"✅加载combo_mask: {new_path}")
-    except:
-        print(f"✅计算新的combo_mask...")
-
-    # 如果没有找到，则重新计算
-    if combo_mask is None:
-        #  新股过滤
-        new_stock_filter = get_new_stock_filter(stock_list, date_list)
-        # st过滤
-        st_filter = get_st_filter(stock_list, date_list)
-        # 停牌过滤
-        suspended_filter = get_suspended_filter(stock_list, date_list)
-
-        combo_mask = (
-            new_stock_filter.astype(int)
-            + st_filter.astype(int)
-            + suspended_filter.astype(int)
-            + (~stock_universe).astype(int)
-        ) == 0
-
-        # 保存到新路径
-        combo_mask.to_pickle(new_path)
-        print(f"✅保存combo_mask: {new_path}")
-
-    # axis=1,过滤掉所有日期截面都是nan的股票
-    factor = factor.mask(~combo_mask).dropna(axis=1, how="all")
-
-    # 涨停过滤
-    limit_up_filter = get_limit_up_filter(stock_list, date_list)
-    factor = factor.mask(limit_up_filter)
+    factor.to_pickle(processed_path)
+    print(f"✅processed_factor已保存到: {processed_path}")
 
     return factor
 
 
-def factor_layered_backtest(df, index_item, g=10, rebalance_days=20, rebalance=False):
+def factor_layered_backtest(
+    df,
+    index_item,
+    direction,
+    neutralize,
+    factor_name,
+    g=10,
+    rebalance_days=20,
+    rebalance=False,
+):
     """
     因子分层回测函数（优化版）
 
     :param df: 因子值 DataFrame (unstack格式)
     :param g: 分组数量
     :param index_item: 券池名称
+    :param direction: 因子方向（1或-1）
+    :param neutralize: 是否中性化
     :param rebalance_days: 调仓频率（天数），默认20天
     :param name: 因子名称
     :param rebalance: 是否每日重新平衡权重
@@ -906,11 +630,14 @@ def factor_layered_backtest(df, index_item, g=10, rebalance_days=20, rebalance=F
         - turnover_ratio: 各分组的换手率
     """
 
+    # 信号下移一个交易日
     df = df.shift(1).iloc[1:]
     order_book_ids = df.columns.tolist()
     date_list = df.index.tolist()
     start = date_list[0].strftime("%F")
     end = date_list[-1].strftime("%F")
+
+    stock_universe = INDEX_FIX(start, end, index_item)
 
     # 尝试从路径读取return_1d
     new_path = get_data_path("return_1d", index_item=index_item, start=start, end=end)
@@ -924,25 +651,24 @@ def factor_layered_backtest(df, index_item, g=10, rebalance_days=20, rebalance=F
     except:
         print(f"✅计算新的return_1d...")
 
-    # 如果没有找到，则重新计算
-    if return_1d is None:
-        stock_universe = INDEX_FIX(start, end, index_item)
-        order_book_ids = stock_universe.columns.tolist()
-        open = get_price(
-            order_book_ids,
-            start,
-            get_next_trading_date(end, 1),
-            "1d",
-            "open",
-            "pre",
-            False,
-            True,
-        ).open.unstack("order_book_id")
-        return_1d = open.pct_change().shift(-1).dropna(axis=0, how="all").stack()
+        # 如果没有找到，则重新计算
+        if return_1d is None:
+            order_book_ids = stock_universe.columns.tolist()
+            open = get_price(
+                order_book_ids,
+                start,
+                get_next_trading_date(end, 1),
+                "1d",
+                "open",
+                "pre",
+                False,
+                True,
+            ).open.unstack("order_book_id")
+            return_1d = open.pct_change().shift(-1).dropna(axis=0, how="all").stack()
 
-        # 保存到新路径
-        return_1d.to_pickle(new_path)
-        print(f"✅保存return_1d: {new_path}")
+            # 保存到新路径
+            return_1d.to_pickle(new_path)
+            print(f"✅保存return_1d: {new_path}")
 
     # 数据合并，使用multiindex
     factor_data = df.stack().to_frame("factor")
@@ -1079,101 +805,17 @@ def factor_layered_backtest(df, index_item, g=10, rebalance_days=20, rebalance=F
         group_annual_ret["group"] = list(range(1, g + 1))
         corr_value = round(group_annual_ret.corr(method="spearman").iloc[0, 1], 4)
 
-        # group_annual_ret.annual_ret.plot(
-        #     kind="bar",
-        #     figsize=(10, 5),
-        #     title=f"{name}_分层超额年化收益_单调性{corr_value}",
-        # )
-
-        # # 净值表现图 - 突出G1和G10组，弱化其他组
-        # fig, ax = plt.subplots(figsize=(10, 5))
-
-        # # 绘制所有组的线条
-        # for col in group_return.columns:
-        #     if col in ["G1", "G10"]:
-        #         # 突出显示G1和G10组
-        #         linewidth = 3
-        #         alpha = 1.0
-        #         if col == "G10":
-        #             color = "#FF0000"  # 鲜红色
-        #         else:  # G1
-        #             color = "#00AA00"  # 鲜绿色
-        #     elif col == "Benchmark":
-        #         # 基准线保持可见
-        #         linewidth = 2
-        #         alpha = 0.8
-        #         color = "#000000"  # 黑色
-        #     else:
-        #         # 弱化其他组
-        #         linewidth = 1
-        #         alpha = 0.3
-        #         color = "#CCCCCC"  # 浅灰色
-
-        #     ax.plot(
-        #         group_return.index,
-        #         group_return[col],
-        #         label=col,
-        #         linewidth=linewidth,
-        #         alpha=alpha,
-        #         color=color,
-        #     )
-
-        # ax.set_title(f"{name}_分层净值表现")
-        # ax.legend(bbox_to_anchor=(1.05, 1), loc="upper left", ncol=1, fontsize=8)
-        # ax.grid(True, alpha=0.3)
-
-        # # 年化收益图
-        # yby_performance = (
-        #     group_return.pct_change()
-        #     .resample("Y")
-        #     .apply(lambda x: (1 + x).cumprod().iloc[-1])
-        #     .T
-        # )
-        # yby_performance -= yby_performance.loc["Benchmark"]
-        # yby_performance = yby_performance.replace(0, np.nan).dropna(how="all")
-
-        # # 根据年份数量动态生成颜色
-        # num_years = len(yby_performance.columns)
-
-        # # 基础高对比度颜色方案
-        # base_colors = [
-        #     "#1f77b4",  # 蓝色
-        #     "#ff7f0e",  # 橙色
-        #     "#2ca02c",  # 绿色
-        #     "#d62728",  # 红色
-        #     "#9467bd",  # 紫色
-        #     "#8c564b",  # 棕色
-        #     "#e377c2",  # 粉色
-        #     "#7f7f7f",  # 灰色
-        #     "#bcbd22",  # 橄榄色
-        #     "#000080",  # 深蓝色
-        #     "#FF1493",  # 深粉色
-        #     "#00CED1",  # 暗青色
-        #     "#FF4500",  # 橙红色
-        #     "#32CD32",  # 酸橙绿
-        #     "#8A2BE2",  # 蓝紫色
-        #     "#DC143C",  # 深红色
-        #     "#00BFFF",  # 深天蓝
-        #     "#FFD700",  # 金色
-        #     "#FF69B4",  # 热粉色
-        #     "#228B22",  # 森林绿
-        # ]
-
-        # # 如果年份数量超过基础颜色数量，使用matplotlib的颜色循环
-        # if num_years > len(base_colors):
-        #     colors = [plt.cm.tab20(i / num_years) for i in range(num_years)]
-        # else:
-        #     colors = base_colors[:num_years]
-
-        # # 逐年分层年化收益图
-        # ax = yby_performance.plot(
-        #     kind="bar",
-        #     figsize=(12, 6),
-        #     title=f"{name}_逐年分层年化收益",
-        #     color=colors[: len(yby_performance.columns)],
-        # )
-        # # 设置图例为水平排列，位置在图下方
-        # ax.legend(bbox_to_anchor=(0.5, -0.15), loc="upper center", ncol=5, fontsize=9)
+    # 绘制分层回测结果
+    print(f"✅生成分层分析图表...")
+    plot_factor_layered_analysis(
+        group_return,
+        index_item,
+        direction,
+        neutralize,
+        rebalance_days=rebalance_days,
+        stock_universe=stock_universe,
+        factor_name=factor_name,
+    )
 
     return group_return, turnover_ratio
 
@@ -1360,15 +1002,18 @@ def plot_factor_layered_analysis(
 
             start_date = stock_universe.index[0].strftime("%Y-%m-%d")
             end_date = stock_universe.index[-1].strftime("%Y-%m-%d")
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M")
-            filename = f"{factor_name}_{index_item}_{direction}_{neutralize}_{start_date}_{end_date}_{rebalance_days}_layered.png"
 
-            # 确保目录存在
-            reports_dir = (
-                "/Users/didi/KDCJ/alpha_local/outputs/reports/layered_analysis"
+            # 使用get_data_path生成路径，根据index_item分类存放
+            save_path = get_data_path(
+                "layered_report",
+                factor_name=factor_name,
+                index_item=index_item,
+                direction=direction,
+                neutralize=neutralize,
+                start_date=start_date,
+                end_date=end_date,
+                rebalance_days=rebalance_days,
             )
-            os.makedirs(reports_dir, exist_ok=True)
-            save_path = os.path.join(reports_dir, filename)
 
     # 保存图片
     plt.savefig(save_path, dpi=300, bbox_inches="tight", facecolor="white")

@@ -600,17 +600,30 @@ def get_performance_analysis(
         "盈亏比": round(Profit_Lose_Ratio, 4),
     }
 
-    # 分别为收益曲线和指标表格创建独立目录
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M")
-    charts_dir = "/Users/didi/KDCJ/alpha_local/outputs/reports/performance_charts"
-    tables_dir = "/Users/didi/KDCJ/alpha_local/outputs/reports/metrics_tables"
-    os.makedirs(charts_dir, exist_ok=True)
-    os.makedirs(tables_dir, exist_ok=True)
+    # 使用get_data_path生成路径，根据index_item和日期分类存放
+    from factor_utils.path_manager import get_data_path
 
-    chart_filename = f"{factor_name}_{benchmark_index}_{direction}_{neutralize}_{start_date}_{end_date}_{timestamp}_performance_chart.png"
-    table_filename = f"{factor_name}_{benchmark_index}_{direction}_{neutralize}_{start_date}_{end_date}_{timestamp}_metrics_table.png"
-    chart_path = os.path.join(charts_dir, chart_filename)
-    table_path = os.path.join(tables_dir, table_filename)
+    chart_path = get_data_path(
+        "performance_chart",
+        factor_name=factor_name,
+        benchmark_index=benchmark_index,
+        direction=direction,
+        neutralize=neutralize,
+        start_date=start_date,
+        end_date=end_date,
+        index_item=benchmark_index,  # 使用benchmark_index作为index_item
+    )
+
+    table_path = get_data_path(
+        "metrics_table",
+        factor_name=factor_name,
+        benchmark_index=benchmark_index,
+        direction=direction,
+        neutralize=neutralize,
+        start_date=start_date,
+        end_date=end_date,
+        index_item=benchmark_index,  # 使用benchmark_index作为index_item
+    )
 
     # ==================== 图1：绩效指标表 ====================
     fig2, ax3 = plt.subplots(figsize=(12, 16))  # 竖向布局，适合表格
@@ -684,7 +697,7 @@ def get_performance_analysis(
     # 保存绩效指标表
     if factor_name:
         plt.savefig(table_path, dpi=300, bbox_inches="tight", facecolor="white")
-        # print(f"绩效指标表已保存到: {table_path}")
+        print(f"绩效指标表已保存到: {table_path}")
 
     if show_plot:
         plt.show()
@@ -727,7 +740,10 @@ def get_performance_analysis(
 
     # 设置主图样式
     ax1.set_title(
-        f'{factor_name or "策略"}_收益曲线分析_{start_date}_{end_date}', fontsize=18, fontweight="bold", pad=20
+        f'{factor_name or "策略"}_收益曲线分析_{start_date}_{end_date}',
+        fontsize=18,
+        fontweight="bold",
+        pad=20,
     )
     ax1.set_xlabel("日期", fontsize=12)
     ax1.set_ylabel("累积收益", fontsize=12)
@@ -745,7 +761,7 @@ def get_performance_analysis(
     # 保存收益曲线图
     if factor_name:
         plt.savefig(chart_path, dpi=300, bbox_inches="tight", facecolor="white")
-        # print(f"收益曲线图已保存到: {chart_path}")
+        print(f"收益曲线图已保存到: {chart_path}")
 
     if show_plot:
         plt.show()
