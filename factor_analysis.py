@@ -34,20 +34,47 @@ warnings.filterwarnings("ignore")
 
 
 # 热力图
-def hot_corr(name, ic_df):
+def hot_corr(name, ic_df, index_item, neutralize, start_date, end_date):
     """
+    生成因子IC相关性热力图并保存到统一路径
+
     :param name: 因子名称 -> list
     :param ic_df: ic序列表 -> dataframe
-    :return fig: 热力图 -> plt
+    :param index_item: 指数代码 -> str
+    :param neutralize: 中性化状态 -> bool
+    :param start_date: 开始日期 -> str
+    :param end_date: 结束日期 -> str
+    :return: 保存路径 -> str
     """
-    ax = plt.subplots(figsize=(len(name), len(name)))  # 调整画布大小
-    ax = sns.heatmap(
+    from factor_utils.path_manager import get_data_path
+
+    # 创建图形
+    fig, ax = plt.subplots(figsize=(len(name), len(name)))  # 调整画布大小
+    sns.heatmap(
         ic_df[name].corr(), vmin=0.4, square=True, annot=True, cmap="Greens"
     )  # annot=True 表示显示系数
     plt.title("Factors_IC_CORRELATION")
     # 设置刻度字体大小
     plt.xticks(fontsize=10)
     plt.yticks(fontsize=10)
+
+    # 生成保存路径
+    hot_corr_path = get_data_path(
+        "hot_corr",
+        index_item=index_item,
+        neutralize=neutralize,
+        start_date=start_date,
+        end_date=end_date,
+    )
+
+    # 保存图片
+    plt.savefig(hot_corr_path, dpi=300, bbox_inches="tight")
+    print(f"✅因子IC相关性热力图已保存到: {hot_corr_path}")
+
+    # 显示图片
+    plt.show()
+
+    return hot_corr_path
 
 
 # 动态券池
@@ -328,7 +355,7 @@ def neutralization_vectorized(
         print(f"✅行业市值中性化:保存industry_market: {new_path}")
 
     df_industry_market["factor"] = factor.stack()
-    df_industry_market.dropna(subset="factor", inplace=True)
+    # df_industry_market.dropna(subset="factor", inplace=True)
 
     # 将factor列移到第一列
     cols = df_industry_market.columns.tolist()
@@ -419,12 +446,31 @@ def calc_ic(
             how="all"
         )
 
+    # 保存IC值数据
+    start_date = df.index[0].strftime("%Y-%m-%d")
+    end_date = df.index[-1].strftime("%Y-%m-%d")
+
+    ic_df_path = get_data_path(
+        "IC_df",
+        factor_name=factor_name,
+        index_item=index_item,
+        direction=direction,
+        neutralize=neutralize,
+        start_date=start_date,
+        end_date=end_date,
+    )
+
+    # 将IC值保存为Series格式
+    ic_values.to_pickle(ic_df_path)
+    print(f"✅IC值数据已保存到: {ic_df_path}")
+
     # t检验 单样本
     t_stat, _ = stats.ttest_1samp(ic_values, 0)
 
     # 因子报告
     ic_report = {
         "factor_name": factor_name,
+        "index_item": index_item,
         "direction": direction,
         "neutralized": neutralize,
         "rebalance_days": rebalance_days,
@@ -470,8 +516,18 @@ def calc_ic(
 
     # 设置表格样式
     table.auto_set_font_size(False)
-    table.set_fontsize(10)
-    table.scale(1.2, 2)
+    table.set_fontsize(9)  # 稍微减小字体
+    table.scale(1.5, 2.5)  # 增加表格宽度和高度
+
+    # 设置列宽，特别是factor_name列
+    cellDict = table.get_celld()
+    for i in range(len(col_labels)):
+        for j in range(len(table_data) + 1):  # +1 for header
+            cell = cellDict[(j, i)]
+            if i == 0:  # factor_name列
+                cell.set_width(0.2)  # 增加第一列宽度
+            else:
+                cell.set_width(0.08)  # 其他列保持较小宽度
 
     # 设置表头样式
     for i in range(len(col_labels)):

@@ -738,6 +738,12 @@ def get_performance_analysis(
     ax2.set_ylabel("超额收益", color="#2ca02c", fontsize=12)
     ax2.tick_params(axis="y", labelcolor="#2ca02c")
 
+    # 设置x轴日期格式 - 每年显示一次
+    import matplotlib.dates as mdates
+    ax1.xaxis.set_major_locator(mdates.YearLocator())  # 每年一个主刻度
+    ax1.xaxis.set_major_formatter(mdates.DateFormatter('%Y'))  # 只显示年份
+    ax1.xaxis.set_minor_locator(mdates.MonthLocator([1, 7]))  # 每半年一个次刻度
+    
     # 设置主图样式
     ax1.set_title(
         f'{factor_name or "策略"}_收益曲线分析_{neutralize}_{start_date}_{end_date}',
