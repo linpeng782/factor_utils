@@ -13,9 +13,7 @@ from rqfactor.extension import *
 
 init("13522652015", "123456")
 import rqdatac
-
 from tqdm import *
-
 import matplotlib.pyplot as plt
 
 plt.rcParams["font.sans-serif"] = [

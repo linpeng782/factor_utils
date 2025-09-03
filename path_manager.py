@@ -190,7 +190,7 @@ def load_processed_factors(factor_names, neutralize, index_item, start_date, end
     :return: 单个因子返回DataFrame，多个因子返回字典
     """
     import pandas as pd
-    from alpha_local.core.factor_config import get_factor_config
+    from alpha_local.core.factors import get_factor_config
 
     # 统一处理为列表格式
     if isinstance(factor_names, str):
